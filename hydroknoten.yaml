@@ -1,0 +1,260 @@
+esphome:
+  name: hydroknoten
+  friendly_name: Hydroknoten
+  comment: "DiXY Hydroknoten v3.0 – EC + pH + DS18B20 + OLED + Menü + Offsets + Kalibrierung"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# ===============================================================
+# LOGGING
+# ===============================================================
+logger:
+
+# ===============================================================
+# WLAN
+# ===============================================================
+wifi:
+  ssid: "dixy"
+  password: "monochrome1"
+  ap:
+    ssid: "BS125"
+    password: "monochrome1"
+
+# ===============================================================
+# OTA
+# ===============================================================
+ota:
+  platform: esphome
+  password: "nicklker"
+
+# ===============================================================
+# API
+# ===============================================================
+api:
+  reboot_timeout: 0s
+
+# ===============================================================
+# WEB-DASHBOARD
+# ===============================================================
+web_server:
+  port: 80
+
+# ===============================================================
+# ZEIT VON HOME ASSISTANT
+# ===============================================================
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ===============================================================
+# SYSTEM-INFORMATIONEN
+# ===============================================================
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 10s
+
+  - platform: uptime
+    name: "Uptime"
+
+  - platform: internal_temperature
+    name: "ESP32 Chip Temperatur"
+
+  - platform: template
+    name: "Free Heap"
+    unit_of_measurement: "kB"
+    lambda: |-
+      return ESP.getFreeHeap() / 1024.0;
+    update_interval: 20s
+
+binary_sensor:
+  - platform: status
+    name: "Hydroknoten Online"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Adresse"
+    ssid:
+      name: "Verbundenes WLAN"
+
+  - platform: template
+    name: "Firmware Version"
+    lambda: |-
+      return {"v3.0 - 2025-11-23"};
+
+# ===============================================================
+# I2C BUS (OLED SSD1309)
+# ===============================================================
+i2c:
+  sda: 21
+  scl: 22
+  scan: true
+  frequency: 400kHz
+
+# ===============================================================
+# DISPLAY / OLED SSD1309 – Setup
+# ===============================================================
+font:
+  - file: "fonts/arial.ttf"
+    id: font_small
+    size: 12
+
+display:
+  - platform: ssd1306_i2c
+    id: oled
+    model: "SSD1306 128x64"
+    update_interval: 0.5s
+    pages:
+      - id: page_home
+        lambda: |-
+          it.printf(0, 0, id(font_small), "Hydroknoten v3.0");
+          it.printf(0, 15, id(font_small), "EC: %.2f mS/cm", id(ec_value).state);
+          it.printf(0, 30, id(font_small), "pH: %.2f", id(ph_value).state);
+          it.printf(0, 45, id(font_small), "T1: %.1fC", id(temp1_val).state);
+          it.printf(70, 45, id(font_small), "T2: %.1fC", id(temp2_val).state);
+
+# ===============================================================
+# DS18B20 TEMPERATURE SENSORS
+# ===============================================================
+dallas:
+  - pin: 4
+  - pin: 5
+
+sensor:
+  - platform: dallas
+    address: 0x0000000000000001
+    name: "Tank Temp"
+    id: temp1_val
+
+  - platform: dallas
+    address: 0x0000000000000002
+    name: "Rücklauf Temp"
+    id: temp2_val
+
+# ===============================================================
+# TEMPERATUR OFFSETS (persistente Werte)
+# ===============================================================
+number:
+  - platform: template
+    name: "Temp1 Offset"
+    id: temp1_offset
+    min_value: -2
+    max_value: 2
+    step: 0.1
+    restore_value: true
+    initial_value: 0
+
+  - platform: template
+    name: "Temp2 Offset"
+    id: temp2_offset
+    min_value: -2
+    max_value: 2
+    step: 0.1
+    restore_value: true
+    initial_value: 0
+
+# ===============================================================
+# ANALOG SENSORS (EC & PH)
+# ===============================================================
+sensor:
+  - platform: adc
+    pin: 34
+    id: ec_raw
+    name: "EC Raw Voltage"
+    update_interval: 0.5s
+    attenuation: 11db
+
+  - platform: adc
+    pin: 35
+    id: ph_raw
+    name: "PH Raw Voltage"
+    update_interval: 0.5s
+    attenuation: 11db
+
+# ===============================================================
+# KALIBRIERWERTE (persistiert)
+# ===============================================================
+
+number:
+  - platform: template
+    name: "EC Kalibrierpunkt 1413µS"
+    id: ec_cal_low
+    min_value: 0.05
+    max_value: 1.0
+    step: 0.001
+    restore_value: true
+    initial_value: 0.104
+
+  - platform: template
+    name: "EC Kalibrierpunkt 12.88mS"
+    id: ec_cal_high
+    min_value: 1.0
+    max_value: 3.3
+    step: 0.001
+    restore_value: true
+    initial_value: 1.598
+
+  - platform: template
+    name: "pH Kalibrierpunkt 7.0"
+    id: ph_cal_7
+    min_value: 1.0
+    max_value: 4.0
+    step: 0.01
+    restore_value: true
+    initial_value: 2.50
+
+  - platform: template
+    name: "pH Kalibrierpunkt 4.0"
+    id: ph_cal_4
+    min_value: 1.0
+    max_value: 4.0
+    step: 0.01
+    restore_value: true
+    initial_value: 3.00
+
+# ===============================================================
+# EC FORMEL + TEMPKOMP
+# ===============================================================
+sensor:
+  - platform: template
+    name: "EC Wert"
+    id: ec_value
+    unit_of_measurement: "mS/cm"
+    accuracy_decimals: 2
+    lambda: |-
+      float v = id(ec_raw).state * 3.3;
+      float v_low = id(ec_cal_low).state;
+      float v_high = id(ec_cal_high).state;
+
+      float slope = (12.88 - 1.413) / (v_high - v_low);
+      float offset = 1.413 - slope * v_low;
+      float ec = slope * v + offset;
+      if(ec < 0) ec = 0;
+
+      float t = id(temp1_val).state;
+      if(isnan(t)) return ec;
+
+      float ec25 = ec / (1 + 0.0185*(t - 25.0));
+      return ec25;
+
+# ===============================================================
+# PH FORMEL
+# ===============================================================
+sensor:
+  - platform: template
+    name: "pH Wert"
+    id: ph_value
+    unit_of_measurement: "pH"
+    accuracy_decimals: 2
+    lambda: |-
+      float v = id(ph_raw).state * 3.3;
+      float v7 = id(ph_cal_7).state;
+      float v4 = id(ph_cal_4).state;
+
+      float m = (4.0 - 7.0) / (v4 - v7);
+      float ph = m * (v - v7) + 7.0;
+      return ph;
