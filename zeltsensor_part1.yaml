@@ -1,0 +1,263 @@
+esphome:
+  name: zeltsensor
+  friendly_name: Zeltsensor
+  comment: "DiXY Zeltsensor v1.4 – Ultra Extended Edition"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# ============================================
+# LOGGING
+# ============================================
+logger:
+
+# ============================================
+# WLAN + FALLBACK
+# ============================================
+wifi:
+  ssid: "dixy"
+  password: "monochrome1"
+  ap:
+    ssid: "BS125"
+    password: "monochrome1"
+
+# ============================================
+# OTA UPDATE
+# ============================================
+ota:
+  platform: esphome
+  password: "nicklker"
+
+# ============================================
+# API
+# ============================================
+api:
+  reboot_timeout: 0s
+
+# ============================================
+# WEB DASHBOARD
+# ============================================
+web_server:
+  port: 80
+
+# ============================================
+# ZEIT
+# ============================================
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ============================================
+# I2C
+# ============================================
+i2c:
+  sda: 21
+  scl: 22
+  frequency: 100kHz
+  scan: true
+
+# ============================================
+# SYSTEM-INFORMATIONEN (ULTRA-MODUS)
+# ============================================
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_rssi
+    update_interval: 10s
+
+  - platform: uptime
+    name: "ESP Uptime"
+    id: esp_uptime
+
+  - platform: internal_temperature
+    name: "ESP32 Chip Temperatur"
+    id: esp_chiptemp
+
+  - platform: template
+    name: "ESP Free Heap"
+    lambda: |-
+      return ESP.getFreeHeap() / 1024.0;
+    unit_of_measurement: "kB"
+    update_interval: 30s
+
+  - platform: template
+    name: "ESP CPU Frequenz"
+    lambda: |-
+      return ESP.getCpuFreqMHz();
+    unit_of_measurement: "MHz"
+    update_interval: 60s
+
+# ============================================
+# STATUS SENSOR (ONLINE / OFFLINE)
+# ============================================
+binary_sensor:
+  - platform: status
+    name: "Zeltsensor Online"
+
+# ============================================
+# TEXT-SENSOREN (IP, SSID, MAC, Version, FW)
+# ============================================
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Adresse"
+    ssid:
+      name: "Verbundenes WLAN"
+    bssid:
+      name: "WLAN BSSID"
+    mac_address:
+      name: "MAC Adresse"
+
+  - platform: version
+    name: "ESPHome Version"
+
+  - platform: template
+    name: "Firmware"
+    id: firmware_text
+    lambda: |-
+      return {"v1.4 - 2025-11-23"};
+
+# ============================================
+# BMP280 (mit Home Assistant Offset-Steuerung)
+# ============================================
+number:
+  - platform: template
+    name: "BMP Druck-Offset"
+    id: bmp_pressure_offset
+    min_value: -20
+    max_value: 20
+    step: 0.1
+    restore_value: true
+    initial_value: 0
+
+  - platform: template
+    name: "BMP Temp-Offset"
+    id: bmp_temp_offset
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    restore_value: true
+    initial_value: 0
+
+sensor:
+  - platform: bmp280
+    address: 0x76
+    temperature:
+      id: bmp_temp_raw
+      name: "BMP280 Temperatur Roh"
+    pressure:
+      id: bmp_press_raw
+      name: "BMP280 Druck Roh"
+    update_interval: 5s
+
+  # korrigierte Werte
+  - platform: template
+    name: "BMP280 Temperatur"
+    id: bmp_temp_corr
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(bmp_temp_raw).state - id(bmp_temp_offset).state;
+
+  - platform: template
+    name: "BMP280 Druck"
+    id: bmp_press_corr
+    unit_of_measurement: "hPa"
+    lambda: |-
+      return id(bmp_press_raw).state - id(bmp_pressure_offset).state;
+
+# ============================================
+# SHT31
+# ============================================
+  - platform: sht3xd
+    address: 0x44
+    temperature:
+      name: "SHT31 Temperatur"
+      id: temp_sht
+    humidity:
+      name: "SHT31 Luftfeuchtigkeit"
+      id: hum_sht
+
+# ============================================
+# VPD (aus SHT31)
+# ============================================
+  - platform: template
+    name: "VPD"
+    id: vpd_calc
+    unit_of_measurement: "kPa"
+    lambda: |-
+      const float T = id(temp_sht).state;
+      const float RH = id(hum_sht).state;
+      float es = 0.6108 * exp((17.27 * T) / (T + 237.3));
+      float ea = es * (RH / 100.0);
+      return (es - ea);
+
+# ============================================
+# AS7341
+# ============================================
+  - platform: as7341
+    address: 0x39
+    channel_clear:
+      name: "AS7341 Clear"
+    channel_f1:
+      name: "AS7341 F1"
+    channel_f2:
+      name: "AS7341 F2"
+    channel_f3:
+      name: "AS7341 F3"
+    channel_f4:
+      name: "AS7341 F4"
+    channel_f5:
+      name: "AS7341 F5"
+    channel_f6:
+      name: "AS7341 F6"
+    channel_f7:
+      name: "AS7341 F7"
+    channel_f8:
+      name: "AS7341 F8"
+
+# ============================================
+# OLED DISPLAY
+# ============================================
+font:
+  - file: "fonts/arial.ttf"
+    id: font1
+    size: 12
+
+display:
+  - platform: ssd1306_i2c
+    id: oled
+    model: "SSD1306 128x64"
+    pages:
+      - id: page_start
+        lambda: |-
+          it.printf(0, 0, id(font1), "DiXY Zeltsensor");
+          it.printf(0, 20, id(font1), "Firmware v1.4");
+          it.printf(0, 40, id(font1), "Starte...");
+
+      - id: page_temp
+        lambda: |-
+          it.printf(0, 0, id(font1), "Temp: %.1f°C", id(temp_sht).state);
+          it.printf(0, 20, id(font1), "RH: %.1f%%", id(hum_sht).state);
+          it.printf(0, 40, id(font1), "VPD: %.2f kPa", id(vpd_calc).state);
+
+      - id: page_bmp
+        lambda: |-
+          it.printf(0, 0, id(font1), "BMP Temp: %.1f°C", id(bmp_temp_corr).state);
+          it.printf(0, 20, id(font1), "Druck: %.2f hPa", id(bmp_press_corr).state);
+
+      - id: page_wifi
+        lambda: |-
+          it.printf(0, 0, id(font1), "IP: %s", id(wifi_info_ip_address)->state.c_str());
+          it.printf(0, 20, id(font1), "RSSI: %.0f dBm", id(wifi_rssi).state);
+
+# ============================================
+# BUTTONS (Seitenwechsel)
+# ============================================
+binary_sensor:
+  - platform: gpio
+    pin: 32
+    name: "Button Next"
+    on_press:
+      - display.page.show_next: oled
